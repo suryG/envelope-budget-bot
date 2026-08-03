@@ -4,13 +4,14 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   Browsers,
   WASocket,
+  isJidStatusBroadcast,
+  WAMessageKey,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import QRCode from "qrcode";
 import pino from "pino";
-import { getStatusMessage, getOverBudgetMessage } from "../commands/status";
+import { getStatusMessage } from "../commands/status";
 import { handleEditCommand } from "../commands/edit";
-import { confirmTransaction, getLatestPendingTransaction } from "../services/transactionService";
 
 // משתנים גלובליים המיוצאים לשימוש Express
 export let latestQrDataUrl: string | null = null;
@@ -29,12 +30,22 @@ export async function startWhatsAppClient() {
   const sock: WASocket = makeWASocket({
     auth: state,
     version,
-    logger: pino({ level: "silent" }), // משתיק לוגים פנימיים כגון כשלים בפענוח סטטוסים
+    // משתיק לוגים פנימיים לחלוטין ברמת הספרייה
+    logger: pino({ level: "fatal" }), 
     browser: Browsers.ubuntu("Desktop"),
+    
+    // סינון סטטוסים וסנכרון היסטוריה ברמת הפרוטוקול
     syncFullHistory: false,
-    shouldSyncHistoryMessage: () => false, // מתעלם מטעינת היסטוריה כבדה
-    connectTimeoutMs: 60000,              // מאריך זמן המתינה ל-60 שניות
+    shouldSyncHistoryMessage: () => false,
+    shouldIgnoreJid: (jid) => isJidStatusBroadcast(jid), // סינון מוחלט של סטטוסים לפני פיענוח
+    
+    connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000,
+
+    // פונקציית מפתח למניעת קריסות Retry בעת שגיאות פיענוח
+    getMessage: async (_key: WAMessageKey) => {
+      return undefined;
+    },
   });
 
   // שמירת עדכוני סשן
@@ -48,7 +59,6 @@ export async function startWhatsAppClient() {
       console.log("\n==========================================");
       console.log("🔗 קוד QR חדש נוצר בהצלחה!");
       console.log("==========================================\n");
-      // שמירת קוד ה-QR בפורמט Data URL עבור תצוגה בדפדפן ב-Express
       latestQrDataUrl = await QRCode.toDataURL(qr);
     }
 
@@ -61,6 +71,8 @@ export async function startWhatsAppClient() {
 
       if (shouldReconnect) {
         startWhatsAppClient();
+      } else {
+        console.log("❌ החיבור נזנח (Logged Out). נדרש סריקת QR מחדש.");
       }
     } else if (connection === "open") {
       currentSocket = sock;
@@ -74,16 +86,16 @@ export async function startWhatsAppClient() {
     try {
       const msg = m.messages[0];
 
-      // 1. התעלם מהודעות ריקות, הודעות שנשלחו ע"י הבוט, או עדכוני סטטוס/סטורי
+      // 1. התעלמות מהודעות לא תקינות, הודעות עצמיות, או סטטוסים
       if (
         !msg ||
         msg.key.fromMe ||
-        msg.key.remoteJid === "status@broadcast"
+        isJidStatusBroadcast(msg.key.remoteJid || "")
       ) {
         return;
       }
 
-      // 2. חילוץ טקסט בטוח (התעלמות מ-pkmsg והודעות מערכת)
+      // 2. חילוץ טקסט
       const text =
         msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text;
@@ -91,7 +103,7 @@ export async function startWhatsAppClient() {
       if (!text) return;
 
       const sender = msg.key.remoteJid;
-      if (!sender) return; // Guard clause עבור הטיפוס של sender
+      if (!sender) return;
 
       const trimmedText = text.trim();
 
@@ -109,8 +121,6 @@ export async function startWhatsAppClient() {
         await handleEditCommand(sock, sender, trimmedText);
         return;
       }
-
-      // כאן ניתן להמשיך לוגיקת פקודות נוספות...
 
     } catch (error) {
       console.error("❌ שגיאה בעיבוד ההודעה:", error);
