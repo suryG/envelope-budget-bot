@@ -69,7 +69,9 @@ export async function startWhatsAppClient() {
 
   sock.ev.on("messages.upsert", async ({ messages }) => {
     for (const msg of messages) {
-      if (!msg.message || msg.key.fromMe) continue;
+      // 1. סינון הודעות ריקות, הודעות מהבוט עצמו, או הודעות סטטוס (status@broadcast) שגורמות לשגיאת הצפנה
+      if (!msg.message || msg.key.fromMe || msg.key.remoteJid === "status@broadcast") continue;
+
       const groupId = process.env.WHATSAPP_GROUP_ID;
       if (groupId && msg.key.remoteJid !== groupId) continue;
 

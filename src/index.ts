@@ -6,6 +6,10 @@ import { runMonthlyRollover } from "./services/rollover";
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+app.get("/", (_req, res) => {
+  res.redirect("/qr");
+});
+
 // Health check route - keeps the Render instance awake
 app.get("/health", (_req, res) => {
   res.status(200).json({ status: "ok", uptime: process.uptime(), timestamp: new Date().toISOString() });
