@@ -10,12 +10,17 @@ import makeWASocket, {
 import { Boom } from "@hapi/boom";
 import QRCode from "qrcode";
 import pino from "pino";
+import NodeCache from "node-cache";
+
 import { getStatusMessage } from "../commands/status";
 import { handleEditCommand } from "../commands/edit";
 
 // משתנים גלובליים המיוצאים לשימוש Express
 export let latestQrDataUrl: string | null = null;
 let currentSocket: WASocket | null = null;
+
+// NodeCache לניהול מנגנון ה-Retry של הודעות ומניעת לופים של סנכרון/פיענוח
+const msgRetryCounterCache = new NodeCache();
 
 export function getSocket(): WASocket | null {
   return currentSocket;
@@ -30,22 +35,27 @@ export async function startWhatsAppClient() {
   const sock: WASocket = makeWASocket({
     auth: state,
     version,
-    // משתיק לוגים פנימיים לחלוטין ברמת הספרייה
-    logger: pino({ level: "fatal" }), 
+    // משתיק לוגים פנימיים לחלוטין ברמת הספרייה למניעת הצפת Log Buffer
+    logger: pino({ level: "fatal" }),
     browser: Browsers.ubuntu("Desktop"),
-    
-    // סינון סטטוסים וסנכרון היסטוריה ברמת הפרוטוקול
+
+    // --- הגדרות קריטיות למניעת שגיאות פיענוח, סנכרון היסטוריה ולופי Identity ---
     syncFullHistory: false,
     shouldSyncHistoryMessage: () => false,
-    shouldIgnoreJid: (jid) => isJidStatusBroadcast(jid), // סינון מוחלט של סטטוסים לפני פיענוח
-    
-    connectTimeoutMs: 60000,
-    defaultQueryTimeoutMs: 60000,
+    shouldIgnoreJid: (jid) => isJidStatusBroadcast(jid), // התעלמות מסטטוסים ברמת ה-Protocol לפני פיענוח
 
-    // פונקציית מפתח למניעת קריסות Retry בעת שגיאות פיענוח
+    // ניהול Retry Cache למניעת Bad MAC ולופים של סנכרון מפתחות
+    msgRetryCounterCache,
+
+    // פונקציית מפתח להתמודדות עם הודעות שה-PreKey שלהן נכשל/חסר
     getMessage: async (_key: WAMessageKey) => {
       return undefined;
     },
+
+    // הגדלת טיימאאוטים ושמירת חיבור יציב ב-Render
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000,
+    keepAliveIntervalMs: 30000,
   });
 
   // שמירת עדכוני סשן
@@ -66,17 +76,17 @@ export async function startWhatsAppClient() {
       currentSocket = null;
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      
-      console.log(`החיבור נסגר. קוד שגיאה: ${statusCode} | מתחבר מחדש? ${shouldReconnect}`);
+
+      console.log(`🔌 החיבור נסגר. קוד שגיאה: ${statusCode} | מתחבר מחדש? ${shouldReconnect}`);
 
       if (shouldReconnect) {
         startWhatsAppClient();
       } else {
-        console.log("❌ החיבור נזנח (Logged Out). נדרש סריקת QR מחדש.");
+        console.log("❌ החיבור נזנח (Logged Out). נדרשת סריקת QR מחדש.");
       }
     } else if (connection === "open") {
       currentSocket = sock;
-      latestQrDataUrl = null; // איפוס ה-QR לאחר התחברות בהצלחה
+      latestQrDataUrl = null; // איפוס ה-QR לאחר התחברות מוצלחת
       console.log("✅ מחובר בהצלחה לוואטסאפ!");
     }
   });
@@ -95,7 +105,7 @@ export async function startWhatsAppClient() {
         return;
       }
 
-      // 2. חילוץ טקסט
+      // 2. חילוץ טקסט ההודעה
       const text =
         msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text;
@@ -109,7 +119,7 @@ export async function startWhatsAppClient() {
 
       console.log(`📩 התקבלה הודעה מ-${sender}: "${trimmedText}"`);
 
-      // 3. טיפול בפקודת "יתרות"
+      // 3. טיפול בפקודת "יתרות" / status
       if (trimmedText === "יתרות" || trimmedText.toLowerCase() === "status") {
         const statusMsg = await getStatusMessage();
         await sock.sendMessage(sender, { text: statusMsg });
