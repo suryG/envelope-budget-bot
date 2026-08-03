@@ -25,11 +25,14 @@ export async function startWhatsAppClient() {
   console.log(`📱 Baileys version: v${version.join('.')}, isLatest: ${isLatest}`);
 
   sock = makeWASocket({ 
-    auth: state,
-    version,
-    browser: Browsers.ubuntu("Desktop"),
-    syncFullHistory: false,
-  });
+  auth: state,
+  version,
+  browser: Browsers.ubuntu("Desktop"),
+  syncFullHistory: false,
+  shouldSyncHistoryMessage: () => false, // מתעלם מטעינת היסטוריית עבר כבדה
+  connectTimeoutMs: 60000,              // מאריך את התקשורת מול וואטסאפ ל-60 שניות
+  defaultQueryTimeoutMs: 60000,
+});
 
   sock.ev.on("creds.update", saveCreds);
 
