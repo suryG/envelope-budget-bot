@@ -1,0 +1,69 @@
+// Prisma schema for the Envelope Budget Bot
+// Run `npx prisma migrate dev --name init` locally to create these tables in Supabase
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TransactionStatus {
+  PENDING_CONFIRMATION // suggested a category from history, waiting for user to confirm or correct
+  PENDING_CATEGORY     // no history match found, waiting for user to pick a category
+  CONFIRMED
+}
+
+model Category {
+  id            String   @id @default(uuid())
+  name          String   @unique
+  monthlyBudget Float    @map("monthly_budget")
+  currentBalance Float   @default(0) @map("current_balance")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  transactions  Transaction[]
+  monthlyLogs   MonthlyLog[]
+  merchantMappings MerchantMapping[]
+
+  @@map("categories")
+}
+
+model Transaction {
+  id         String            @id @default(uuid())
+  amount     Float
+  merchant   String
+  categoryId String?           @map("category_id")
+  category   Category?         @relation(fields: [categoryId], references: [id])
+  status     TransactionStatus @default(PENDING_CATEGORY)
+  createdAt  DateTime          @default(now()) @map("created_at")
+
+  @@map("transactions")
+}
+
+// The "memory" table: remembers which category a merchant was assigned to
+// in the past, so future charges from the same merchant can be
+// auto-suggested without calling any AI.
+model MerchantMapping {
+  id           String   @id @default(uuid())
+  merchantName String   @unique @map("merchant_name") // normalized: lowercase + trimmed
+  categoryId   String   @map("category_id")
+  category     Category @relation(fields: [categoryId], references: [id])
+  timesUsed    Int      @default(1) @map("times_used")
+  lastUsed     DateTime @default(now()) @map("last_used")
+
+  @@map("merchant_mappings")
+}
+
+model MonthlyLog {
+  id              String   @id @default(uuid())
+  monthYear       String   @map("month_year") // e.g. "2026-08"
+  categoryId      String   @map("category_id")
+  category        Category @relation(fields: [categoryId], references: [id])
+  rolloverAmount  Float    @map("rollover_amount")
+  startingBalance Float    @map("starting_balance")
+
+  @@unique([monthYear, categoryId])
+  @@map("monthly_logs")
+}
