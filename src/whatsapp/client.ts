@@ -1,6 +1,7 @@
 import makeWASocket, {
   DisconnectReason,
   useMultiFileAuthState,
+  fetchLatestBaileysVersion,
   WASocket,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
@@ -18,7 +19,15 @@ const AUTH_FOLDER = "auth_info_baileys";
 export async function startWhatsAppClient() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
 
-  sock = makeWASocket({ auth: state });
+  // Fetch the latest version of WhatsApp Web to avoid 'connection errored'
+  const { version, isLatest } = await fetchLatestBaileysVersion();
+  console.log(`📱 מפעיל את Baileys עם גרסה v${version.join('.')}, isLatest: ${isLatest}`);
+
+  sock = makeWASocket({ 
+    auth: state,
+    version,
+    browser: ['Ubuntu', 'Chrome', '20.0.04'],
+  });
 
   sock.ev.on("creds.update", saveCreds);
 
@@ -26,7 +35,9 @@ export async function startWhatsAppClient() {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
+      console.log("\n==========================================");
       console.log("סרקו את קוד ה-QR הבא עם וואטסאפ (Linked Devices):");
+      console.log("==========================================\n");
       qrcode.generate(qr, { small: true });
     }
 
@@ -40,7 +51,7 @@ export async function startWhatsAppClient() {
         console.log("נותקת (loggedOut) - יש למחוק את תיקיית auth_info_baileys ולסרוק QR מחדש.");
       }
     } else if (connection === "open") {
-      console.log("✅ מחובר לוואטסאפ");
+      console.log("✅ מחובר בהצלחה לוואטסאפ!");
     }
   });
 
