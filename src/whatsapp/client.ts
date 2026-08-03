@@ -6,7 +6,7 @@ import makeWASocket, {
   WASocket,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
-import qrcode from "qrcode-terminal";
+import QRCode from "qrcode";
 import fs from "fs";
 import { getStatusMessage, getOverBudgetMessage } from "../commands/status";
 import { handleEditCommand } from "../commands/edit";
@@ -14,6 +14,9 @@ import { confirmTransaction, getLatestPendingTransaction } from "../services/tra
 
 let sock: WASocket | null = null;
 const AUTH_FOLDER = "auth_info_baileys";
+
+// משתנה שיחזיק את תמונת ה-QR העדכנית
+export let latestQrDataUrl: string | null = null;
 
 export async function startWhatsAppClient() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
@@ -24,25 +27,26 @@ export async function startWhatsAppClient() {
   sock = makeWASocket({ 
     auth: state,
     version,
-    // שימוש בהגדרת דפדפן תקנית למניעת שגיאת חיבור
     browser: Browsers.ubuntu("Desktop"),
     syncFullHistory: false,
   });
 
   sock.ev.on("creds.update", saveCreds);
 
-  sock.ev.on("connection.update", (update) => {
+  sock.ev.on("connection.update", async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
+      // המרת ה-QR לתמונת DataURL
+      latestQrDataUrl = await QRCode.toDataURL(qr);
       console.log("\n==========================================");
-      console.log("סרקו את קוד ה-QR הבא עם וואטסאפ:");
+      console.log("🔗 קוד QR חדש מוכן!");
+      console.log("פתחו בדפדפן את הכתובת של השרת ב-Render בנתיב: /qr");
       console.log("==========================================\n");
-      // small: false מדפיס קוד גדול וברור יותר שלא נהרס בטרמינל
-      qrcode.generate(qr, { small: false });
     }
 
     if (connection === "close") {
+      latestQrDataUrl = null;
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
       console.log("החיבור נסגר. קוד שגיאה:", statusCode, "| מתחבר מחדש?", shouldReconnect);
@@ -57,6 +61,7 @@ export async function startWhatsAppClient() {
         startWhatsAppClient();
       }
     } else if (connection === "open") {
+      latestQrDataUrl = null; // מנקים לאחר חיבור מוצלח
       console.log("✅ מחובר בהצלחה לוואטסאפ!");
     }
   });
