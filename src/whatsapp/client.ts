@@ -12,104 +12,93 @@ import { getStatusMessage, getOverBudgetMessage } from "../commands/status";
 import { handleEditCommand } from "../commands/edit";
 import { confirmTransaction, getLatestPendingTransaction } from "../services/transactionService";
 
-let sock: WASocket | null = null;
-const AUTH_FOLDER = "auth_info_baileys";
-
-// משתנה שמחזיק את תמונת ה-QR העדכנית בפורמט DataURL עבור נתיב ה-Express
-export let latestQrDataUrl: string | null = null;
-
 export async function startWhatsAppClient() {
-  const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
-  const { version, isLatest } = await fetchLatestBaileysVersion();
-  
-  console.log(`📱 Baileys version: v${version.join('.')}, isLatest: ${isLatest}`);
+  // טעינת מפתחות האוטנטיקציה
+  const { state, saveCreds } = await useMultiFileAuthState("auth_info_baileys");
+  const { version } = await fetchLatestBaileysVersion();
 
-  sock = makeWASocket({ 
-  auth: state,
-  version,
-  browser: Browsers.ubuntu("Desktop"),
-  syncFullHistory: false,
-  shouldSyncHistoryMessage: () => false, // מתעלם מטעינת היסטוריית עבר כבדה
-  connectTimeoutMs: 60000,              // מאריך את התקשורת מול וואטסאפ ל-60 שניות
-  defaultQueryTimeoutMs: 60000,
-});
+  // יצירת ה-Socket עם הגדרות מותאמות למניעת Timeout ועומס זיכרון
+  const sock: WASocket = makeWASocket({
+    auth: state,
+    version,
+    browser: Browsers.ubuntu("Desktop"),
+    syncFullHistory: false,
+    shouldSyncHistoryMessage: () => false, // מתעלם מטעינת היסטוריית עבר כבדה
+    connectTimeoutMs: 60000,              // מאריך את זמן ההמתנה לחיבור ל-60 שניות
+    defaultQueryTimeoutMs: 60000,
+  });
 
+  // שמירת עדכוני אשראי/סשן
   sock.ev.on("creds.update", saveCreds);
 
+  // ניהול החיבור ועדכוני סטטוס
   sock.ev.on("connection.update", async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      // המרת מחרוזת ה-QR לתמונת DataURL עבור בדפדפן
-      latestQrDataUrl = await QRCode.toDataURL(qr);
       console.log("\n==========================================");
       console.log("🔗 קוד QR חדש נוצר בהצלחה!");
       console.log("פתחו בדפדפן את הכתובת: <YOUR_RENDER_URL>/qr");
       console.log("==========================================\n");
+      // שמירת קוד ה-QR כקובץ/תמונה במידת הצורך עבור נתיב ה-/qr
+      await QRCode.toFile("./qr.png", qr);
     }
 
     if (connection === "close") {
-      latestQrDataUrl = null;
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
       
-      console.log("החיבור נסגר. קוד שגיאה:", statusCode, "| מתחבר מחדש?", shouldReconnect);
+      console.log(`החיבור נסגר. קוד שגיאה: ${statusCode} | מתחבר מחדש? ${shouldReconnect}`);
 
       if (shouldReconnect) {
         startWhatsAppClient();
-      } else {
-        console.log("נותקת (loggedOut) - מנקה את תיקיית האימות...");
-        if (fs.existsSync(AUTH_FOLDER)) {
-          fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
-        }
-        startWhatsAppClient();
       }
     } else if (connection === "open") {
-      latestQrDataUrl = null; // ניקוי ה-QR לאחר שהתחברנו בהצלחה
       console.log("✅ מחובר בהצלחה לוואטסאפ!");
     }
   });
 
-  sock.ev.on("messages.upsert", async ({ messages }) => {
-    for (const msg of messages) {
-      // 1. סינון הודעות ריקות, הודעות מהבוט עצמו, או הודעות סטטוס (status@broadcast) שגורמות לשגיאת הצפנה
-      if (!msg.message || msg.key.fromMe || msg.key.remoteJid === "status@broadcast") continue;
+  // מנגנון קבלת הודעות נכנסות
+  sock.ev.on("messages.upsert", async (m) => {
+    try {
+      const msg = m.messages[0];
 
-      const groupId = process.env.WHATSAPP_GROUP_ID;
-      if (groupId && msg.key.remoteJid !== groupId) continue;
+      // התעלם מהודעות שאין לצידן תוכן או שנשלחו על ידי הבוט עצמו
+      if (!msg || msg.key.fromMe) return;
 
+      // חילוץ טקסט בטוח (התעלמות מהודעות מוצפנות מסוג pkmsg / הודעות מערכת)
       const text =
-        msg.message.conversation ?? msg.message.extendedTextMessage?.text ?? "";
-      if (!text) continue;
+        msg.message?.conversation ||
+        msg.message?.extendedTextMessage?.text;
 
-      const reply = await handleIncomingText(text.trim());
-      if (reply) {
-        await sock!.sendMessage(msg.key.remoteJid!, { text: reply });
+      if (!text) return;
+
+      const trimmedText = text.trim();
+      const sender = msg.key.remoteJid;
+
+      if (!sender) return;
+
+      console.log(`📩 התקבלה הודעה מ-${sender}: "${trimmedText}"`);
+
+      // טיפול בפקודת "יתרות"
+      if (trimmedText === "יתרות" || trimmedText.toLowerCase() === "status") {
+        const statusMsg = await getStatusMessage();
+        await sock.sendMessage(sender, { text: statusMsg });
+        return;
       }
+
+      // טיפול בפקודת עריכה
+      if (trimmedText.startsWith("ערוך") || trimmedText.startsWith("edit")) {
+        await handleEditCommand(sock, sender, trimmedText);
+        return;
+      }
+
+      // כאן ניתן להוסיף טיפול בפקודות נוספות (כמו אישור עסקאות וכד')...
+
+    } catch (error) {
+      console.error("❌ שגיאה בעיבוד ההודעה:", error);
     }
   });
 
-  return sock;
-}
-
-async function handleIncomingText(text: string): Promise<string | null> {
-  if (text === "יתרות" || text === "!status") return getStatusMessage();
-  if (text === "חריגות") return getOverBudgetMessage();
-  if (text.startsWith("ערוך") || text.startsWith("שנה עסקה")) return handleEditCommand(text);
-
-  const pending = await getLatestPendingTransaction();
-  if (pending) {
-    try {
-      const { category } = await confirmTransaction(pending.id, text);
-      return `✅ שוייך ל-${category.name}. 📊 יתרה מעודכנת: ${category.currentBalance.toLocaleString()} ₪ / ${category.monthlyBudget.toLocaleString()} ₪`;
-    } catch {
-      return null;
-    }
-  }
-
-  return null;
-}
-
-export function getSocket() {
   return sock;
 }
