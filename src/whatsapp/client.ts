@@ -6,26 +6,26 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import qrcode from "qrcode-terminal";
+import fs from "fs";
+import path from "path";
 import { getStatusMessage, getOverBudgetMessage } from "../commands/status";
 import { handleEditCommand } from "../commands/edit";
 import { confirmTransaction, getLatestPendingTransaction } from "../services/transactionService";
 
 let sock: WASocket | null = null;
-
-// Session credentials are saved to disk so the bot doesn't need a new
-// QR scan every time it restarts (e.g. after Render wakes back up).
 const AUTH_FOLDER = "auth_info_baileys";
 
 export async function startWhatsAppClient() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
 
-  // Fetch the latest version of WhatsApp Web to avoid 'connection errored'
+  // Fetch latest official WA version
   const { version, isLatest } = await fetchLatestBaileysVersion();
-  console.log(`📱 מפעיל את Baileys עם גרסה v${version.join('.')}, isLatest: ${isLatest}`);
+  console.log(`📱 Baileys version: v${version.join('.')}, isLatest: ${isLatest}`);
 
   sock = makeWASocket({ 
     auth: state,
     version,
+    printQRInTerminal: true,
     browser: ['Ubuntu', 'Chrome', '20.0.04'],
   });
 
@@ -44,11 +44,16 @@ export async function startWhatsAppClient() {
     if (connection === "close") {
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      console.log("החיבור נסגר. מתחבר מחדש?", shouldReconnect);
+      console.log("החיבור נסגר. קוד שגיאה:", statusCode, "| מתחבר מחדש?", shouldReconnect);
+      
       if (shouldReconnect) {
         startWhatsAppClient();
       } else {
-        console.log("נותקת (loggedOut) - יש למחוק את תיקיית auth_info_baileys ולסרוק QR מחדש.");
+        console.log("נותקת (loggedOut) - מנקה את תיקיית האימות...");
+        if (fs.existsSync(AUTH_FOLDER)) {
+          fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+        }
+        startWhatsAppClient();
       }
     } else if (connection === "open") {
       console.log("✅ מחובר בהצלחה לוואטסאפ!");
@@ -80,15 +85,12 @@ async function handleIncomingText(text: string): Promise<string | null> {
   if (text === "חריגות") return getOverBudgetMessage();
   if (text.startsWith("ערוך") || text.startsWith("שנה עסקה")) return handleEditCommand(text);
 
-  // Otherwise, treat the message as a reply naming a category for the
-  // most recent pending transaction (confirmation or correction flow).
   const pending = await getLatestPendingTransaction();
   if (pending) {
     try {
       const { category } = await confirmTransaction(pending.id, text);
       return `✅ שוייך ל-${category.name}. 📊 יתרה מעודכנת: ${category.currentBalance.toLocaleString()} ₪ / ${category.monthlyBudget.toLocaleString()} ₪`;
     } catch {
-      // Not a recognized category name - ignore silently, could just be chit-chat.
       return null;
     }
   }
