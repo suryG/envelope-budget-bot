@@ -15,13 +15,13 @@ import { confirmTransaction, getLatestPendingTransaction } from "../services/tra
 let sock: WASocket | null = null;
 const AUTH_FOLDER = "auth_info_baileys";
 
-// משתנה שיחזיק את תמונת ה-QR העדכנית
+// משתנה שמחזיק את תמונת ה-QR העדכנית בפורמט DataURL עבור נתיב ה-Express
 export let latestQrDataUrl: string | null = null;
 
 export async function startWhatsAppClient() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
-
   const { version, isLatest } = await fetchLatestBaileysVersion();
+  
   console.log(`📱 Baileys version: v${version.join('.')}, isLatest: ${isLatest}`);
 
   sock = makeWASocket({ 
@@ -37,11 +37,11 @@ export async function startWhatsAppClient() {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      // המרת ה-QR לתמונת DataURL
+      // המרת מחרוזת ה-QR לתמונת DataURL עבור בדפדפן
       latestQrDataUrl = await QRCode.toDataURL(qr);
       console.log("\n==========================================");
-      console.log("🔗 קוד QR חדש מוכן!");
-      console.log("פתחו בדפדפן את הכתובת של השרת ב-Render בנתיב: /qr");
+      console.log("🔗 קוד QR חדש נוצר בהצלחה!");
+      console.log("פתחו בדפדפן את הכתובת: <YOUR_RENDER_URL>/qr");
       console.log("==========================================\n");
     }
 
@@ -49,19 +49,20 @@ export async function startWhatsAppClient() {
       latestQrDataUrl = null;
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      console.log("החיבור נסגר. קוד שגיאה:", statusCode, "| מתחבר מחדש?", shouldReconnect);
       
+      console.log("החיבור נסגר. קוד שגיאה:", statusCode, "| מתחבר מחדש?", shouldReconnect);
+
       if (shouldReconnect) {
         startWhatsAppClient();
       } else {
-        console.log("נותקת - מנקה סשן ישן...");
+        console.log("נותקת (loggedOut) - מנקה את תיקיית האימות...");
         if (fs.existsSync(AUTH_FOLDER)) {
           fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
         }
         startWhatsAppClient();
       }
     } else if (connection === "open") {
-      latestQrDataUrl = null; // מנקים לאחר חיבור מוצלח
+      latestQrDataUrl = null; // ניקוי ה-QR לאחר שהתחברנו בהצלחה
       console.log("✅ מחובר בהצלחה לוואטסאפ!");
     }
   });
