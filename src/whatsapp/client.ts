@@ -2,12 +2,12 @@ import makeWASocket, {
   DisconnectReason,
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
+  Browsers,
   WASocket,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import qrcode from "qrcode-terminal";
 import fs from "fs";
-import path from "path";
 import { getStatusMessage, getOverBudgetMessage } from "../commands/status";
 import { handleEditCommand } from "../commands/edit";
 import { confirmTransaction, getLatestPendingTransaction } from "../services/transactionService";
@@ -18,15 +18,15 @@ const AUTH_FOLDER = "auth_info_baileys";
 export async function startWhatsAppClient() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
 
-  // Fetch latest official WA version
   const { version, isLatest } = await fetchLatestBaileysVersion();
   console.log(`📱 Baileys version: v${version.join('.')}, isLatest: ${isLatest}`);
 
   sock = makeWASocket({ 
     auth: state,
     version,
-    printQRInTerminal: true,
-    browser: ['Ubuntu', 'Chrome', '20.0.04'],
+    // שימוש בהגדרת דפדפן תקנית למניעת שגיאת חיבור
+    browser: Browsers.ubuntu("Desktop"),
+    syncFullHistory: false,
   });
 
   sock.ev.on("creds.update", saveCreds);
@@ -36,9 +36,10 @@ export async function startWhatsAppClient() {
 
     if (qr) {
       console.log("\n==========================================");
-      console.log("סרקו את קוד ה-QR הבא עם וואטסאפ (Linked Devices):");
+      console.log("סרקו את קוד ה-QR הבא עם וואטסאפ:");
       console.log("==========================================\n");
-      qrcode.generate(qr, { small: true });
+      // small: false מדפיס קוד גדול וברור יותר שלא נהרס בטרמינל
+      qrcode.generate(qr, { small: false });
     }
 
     if (connection === "close") {
@@ -49,7 +50,7 @@ export async function startWhatsAppClient() {
       if (shouldReconnect) {
         startWhatsAppClient();
       } else {
-        console.log("נותקת (loggedOut) - מנקה את תיקיית האימות...");
+        console.log("נותקת - מנקה סשן ישן...");
         if (fs.existsSync(AUTH_FOLDER)) {
           fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
         }
