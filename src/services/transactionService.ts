@@ -8,15 +8,32 @@ interface NewChargeResult {
 }
 
 /**
- * Handles an incoming charge (from manual entry today, from a bank
- * feed later). Looks up merchant history and creates a transaction
- * in the right pending state. Does NOT touch any balance yet -
- * balances only change once the user confirms or picks a category.
+ * בודק אם עסקת Scraper היא חיוב קבוע / הוראת קבע / תשלומים
+ */
+export function isRecurringTransaction(rawTx: any): boolean {
+  return (
+    rawTx?.isInstallment === true ||
+    rawTx?.type === "installments" ||
+    rawTx?.type === "recurring" ||
+    (rawTx?.memo && rawTx.memo.includes("הוראת קבע"))
+  );
+}
+
+/**
+ * קולט עסקה חדשה (ידנית או מה-Scraper).
+ * מסנן הוראות קבע ולא נוגע בפיקדונות/יתרות עד לאישור.
  */
 export async function registerNewCharge(
   merchant: string,
-  amount: number
-): Promise<NewChargeResult> {
+  amount: number,
+  rawTxData?: any
+): Promise<NewChargeResult | null> {
+  // סינון הוראות קבע במידה והגיע מידע מה-Scraper
+  if (rawTxData && isRecurringTransaction(rawTxData)) {
+    console.log(`[Transaction] התעלמות מהוראת קבע/תשלומים: ${merchant}`);
+    return null;
+  }
+
   const mapping = await lookupMerchant(merchant);
 
   const transaction = await prisma.transaction.create({
@@ -65,11 +82,22 @@ export async function confirmTransaction(transactionId: string, categoryName: st
   return { category: updated!, transaction };
 }
 
+/**
+ * במידה והמשתמש ענה "לא" על ההצעה האוטומטית, מעבירים ל-PENDING_CATEGORY
+ */
+export async function rejectSuggestedCategory(transactionId: string) {
+  return prisma.transaction.update({
+    where: { id: transactionId },
+    data: { status: "PENDING_CATEGORY", categoryId: null },
+  });
+}
+
 /** Returns the most recent still-pending transaction, so a bare-word
  * reply like "קניות לבית" in the group knows which charge it refers to. */
 export async function getLatestPendingTransaction() {
   return prisma.transaction.findFirst({
     where: { status: { in: ["PENDING_CATEGORY", "PENDING_CONFIRMATION"] } },
     orderBy: { createdAt: "desc" },
+    include: { category: true }, // הוספנו כדי לקבל גישה לשם הקטגוריה המוצעת
   });
 }

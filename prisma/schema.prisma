@@ -67,3 +67,16 @@ model MonthlyLog {
   @@unique([monthYear, categoryId])
   @@map("monthly_logs")
 }
+model CreditCard {
+  id          String   @id @default(uuid())
+  name        String
+  company     String
+  username    String
+  password    String
+  card6Digits String?  @map("card_6_digits")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("credit_cards")
+}

@@ -6,7 +6,7 @@ export async function getStatusMessage(): Promise<string> {
   if (categories.length === 0) return "עדיין אין קטגוריות מוגדרות. השתמשו ב'ערוך חדש <שם> <תקציב>' כדי להוסיף אחת.";
 
   const lines = categories.map(
-    (c) => `${c.currentBalance < 0 ? "🔴" : "💰"} ${c.name}: ${c.currentBalance.toLocaleString()} ₪ / ${c.monthlyBudget.toLocaleString()} ₪`
+    (c) => `${c.currentBalance < 0 ? "🔴" : "💰"} ${c.name}: ${c.currentBalance.toLocaleString()} ₪`
   );
   return `📊 יתרות נוכחיות:\n${lines.join("\n")}`;
 }

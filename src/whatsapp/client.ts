@@ -12,8 +12,14 @@ import QRCode from "qrcode";
 import pino from "pino";
 import NodeCache from "node-cache";
 
-import { getStatusMessage } from "../commands/status";
+import { getStatusMessage, getOverBudgetMessage } from "../commands/status";
 import { handleEditCommand } from "../commands/edit";
+import { 
+  getLatestPendingTransaction, 
+  confirmTransaction, 
+  rejectSuggestedCategory 
+} from "../services/transactionService";
+import { isUserInWizard, handleWizardStep, startCardWizard } from "./cardWizard";
 
 // משתנים גלובליים המיוצאים לשימוש Express
 export let latestQrDataUrl: string | null = null;
@@ -24,6 +30,32 @@ const msgRetryCounterCache = new NodeCache();
 
 export function getSocket(): WASocket | null {
   return currentSocket;
+}
+
+/**
+ * פונקציה לשליחת הודעה על עסקה חדשה שהגיעה (נקראת למשל מתוך ה-Scraper)
+ */
+export async function sendTransactionNotification(
+  targetJid: string, 
+  transactionData: { id: string; merchant: string; amount: number; suggestedCategoryName: string | null; status: string }
+) {
+  if (!currentSocket) {
+    console.error("❌ לא ניתן לשלוח הודעה: ה-Socket של WhatsApp אינו מחובר.");
+    return;
+  }
+
+  let text = "";
+  if (transactionData.status === "PENDING_CONFIRMATION") {
+    text = `💳 *עסקה חדשה!*\n` +
+           `רכישה ב- *${transactionData.merchant}* על סך *${transactionData.amount} ₪*.\n\n` +
+           `לשייך לקטגוריה *${transactionData.suggestedCategoryName}*? (השיבו *כן* / *לא*)`;
+  } else {
+    text = `💳 *עסקה חדשה!*\n` +
+           `רכישה ב- *${transactionData.merchant}* על סך *${transactionData.amount} ₪*.\n\n` +
+           `לאיזו קטגוריה לשייך את העסקה? (רשמו את שם הקטגוריה)`;
+  }
+
+  await currentSocket.sendMessage(targetJid, { text });
 }
 
 export async function startWhatsAppClient() {
@@ -96,8 +128,8 @@ export async function startWhatsAppClient() {
     try {
       const msg = m.messages[0];
 
-      // 1. התעלמות מהודעות ריקות או מסטטוסים ברשת
-      if (!msg || isJidStatusBroadcast(msg.key.remoteJid || "")) {
+      // 1. התעלמות מהודעות ריקות, הודעות שנשלחו ע"י הבוט עצמו או מסטטוסים ברשת
+      if (!msg || !msg.message || msg.key.fromMe || isJidStatusBroadcast(msg.key.remoteJid || "")) {
         return;
       }
 
@@ -113,21 +145,111 @@ export async function startWhatsAppClient() {
 
       const trimmedText = text.trim();
 
-      // הדפסת לוג לכל הודעה שנקלטת (כולל מציין אם היא נשלחה מתוך המכשיר שלך)
-      console.log(`📩 התקבלה הודעה מ-${sender} (fromMe: ${msg.key.fromMe}): "${trimmedText}"`);
+      // הדפסת לוג לכל הודעה שנקלטת
+      console.log(`📩 התקבלה הודעה מ-${sender}: "${trimmedText}"`);
 
-      // 3. טיפול בפקודת "יתרות" / status
-      if (trimmedText === "יתרות" || trimmedText.toLowerCase() === "status") {
+      // -------------------------------------------------------------
+      // 🟢 3. דיאלוג הוספת כרטיס אשראי (Wizard State)
+      // -------------------------------------------------------------
+      if (isUserInWizard(sender)) {
+        await handleWizardStep(sock, sender, trimmedText);
+        return;
+      }
+
+      if (trimmedText === "הוסף כרטיס") {
+        await startCardWizard(sock, sender);
+        return;
+      }
+
+      // -------------------------------------------------------------
+      // 🟢 4. הודעת פתיחה / תפריט ראשי ("היי")
+      // -------------------------------------------------------------
+      const lowerText = trimmedText.toLowerCase();
+      if (["היי", "הי", "hi", "hello", "שלום", "תפריט"].includes(lowerText)) {
+        const welcomeMessage = 
+`👋 *היי! איזה כיף שפנית אלי.*
+
+מה ברצונך לעשות? הנה הפקודות הזמינות:
+
+📊 *לצפייה ביתרות:* רשום/י *יתרות*
+⚠️ *לצפייה בחריגות תקציב:* רשום/י *חריגות*
+💳 *להוספת כרטיס אשראי חדש:* רשום/י *הוסף כרטיס*
+✏️ *לעריכת קטגוריות/תקציב:* רשום/י *ערוך*`;
+
+        await sock.sendMessage(sender, { text: welcomeMessage });
+        return;
+      }
+
+      // -------------------------------------------------------------
+      // 5. טיפול בפקודת "יתרות" / status
+      // -------------------------------------------------------------
+      if (trimmedText === "יתרות" || lowerText === "status") {
         const statusMsg = await getStatusMessage();
         await sock.sendMessage(sender, { text: statusMsg });
         return;
       }
 
-      // 4. טיפול בפקודת עריכה
-      if (trimmedText.startsWith("ערוך") || trimmedText.startsWith("edit")) {
+      // -------------------------------------------------------------
+      // 6. טיפול בפקודת "חריגות"
+      // -------------------------------------------------------------
+      if (trimmedText === "חריגות") {
+        const overBudgetMsg = await getOverBudgetMessage();
+        await sock.sendMessage(sender, { text: overBudgetMsg });
+        return;
+      }
+
+      // -------------------------------------------------------------
+      // 7. טיפול בפקודת עריכה
+      // -------------------------------------------------------------
+      if (trimmedText.startsWith("ערוך") || lowerText.startsWith("edit")) {
         const responseText = await handleEditCommand(trimmedText);
         await sock.sendMessage(sender, { text: responseText });
         return;
+      }
+
+      // -------------------------------------------------------------
+      // 8. טיפול בעסקאות הממתינות למיון/אישור (Transaction Engine)
+      // -------------------------------------------------------------
+      const pendingTx = await getLatestPendingTransaction();
+
+      if (pendingTx) {
+        // --- מקרה א': עסקה בסטטוס PENDING_CONFIRMATION (מחכה ל"כן" / "לא") ---
+        if (pendingTx.status === "PENDING_CONFIRMATION") {
+          if (trimmedText === "כן" || lowerText === "yes") {
+            const { category } = await confirmTransaction(pendingTx.id, pendingTx.category!.name);
+            await sock.sendMessage(sender, {
+              text: `✅ אושר! העסקה שוייכה ל- *${category.name}*.\n` +
+                    `יתרה עדכנית: *${category.currentBalance.toLocaleString()} ₪*`
+            });
+            return;
+          }
+
+          if (trimmedText === "לא" || lowerText === "no") {
+            await rejectSuggestedCategory(pendingTx.id);
+            await sock.sendMessage(sender, {
+              text: `הבנתי. לאיזו קטגוריה לשייך את העסקה ב- *${pendingTx.merchant}*?`
+            });
+            return;
+          }
+        }
+
+        // --- מקרה ב': עסקה בסטטוס PENDING_CATEGORY (מחכה לשם קטגוריה) ---
+        if (pendingTx.status === "PENDING_CATEGORY") {
+          try {
+            const { category } = await confirmTransaction(pendingTx.id, trimmedText);
+            await sock.sendMessage(sender, {
+              text: `🎯 שוייך בהצלחה ל- *${category.name}*!\n` +
+                    `העסק *${pendingTx.merchant}* נזכר לפעמים הבאות.\n` +
+                    `יתרה עדכנית בקטגוריה: *${category.currentBalance.toLocaleString()} ₪*`
+            });
+            return;
+          } catch (err: any) {
+            await sock.sendMessage(sender, {
+              text: `⚠️ ${err.message}. אנא נסו שוב עם שם קטגוריה תקין.`
+            });
+            return;
+          }
+        }
       }
 
     } catch (error) {

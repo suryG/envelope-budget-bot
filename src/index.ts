@@ -1,7 +1,15 @@
 import "dotenv/config";
 import express from "express";
+import cron from "node-cron";
 import { startWhatsAppClient, latestQrDataUrl, getSocket } from "./whatsapp/client";
 import { runMonthlyRollover } from "./services/rollover";
+import { fetchAndProcessTransactions } from "./services/scraper";
+
+// ⏰ תזמון הרצת ה-Scraper בדיוק כל שעתיים
+cron.schedule("0 */2 * * *", async () => {
+  console.log("⏰ הרצת סקריפר אשראי מתוזמנת (כל שעתיים)...");
+  await fetchAndProcessTransactions();
+});
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -57,22 +65,21 @@ app.listen(PORT, () => {
 
 startWhatsAppClient();
 
-// Naive in-process scheduler: checks once an hour whether it's the 1st
-// of the month and, if so, runs the rollover once.
-let rolloverRanThisMonth = false;
-setInterval(async () => {
-  const now = new Date();
-  if (now.getDate() === 1) {
-    if (!rolloverRanThisMonth) {
-      rolloverRanThisMonth = true;
-      const summary = await runMonthlyRollover();
-      const groupId = process.env.WHATSAPP_GROUP_ID;
-      const sock = getSocket();
-      if (sock && groupId) {
-        await sock.sendMessage(groupId, { text: summary });
-      }
+// ⏰ תזמון מבוסס Cron: רץ בדיוק ב-1 בחודש בחצות הלילה (00:00)
+// בגלל שב-Prisma הגדרת unique constraint על (monthYear, categoryId) ב-MonthlyLog,
+// גם אם יתרחש ריסטארט, המסד נתונים מוגן מכפילויות!
+cron.schedule("0 0 1 * *", async () => {
+  console.log("🔄 מפעיל גלגול חודשי אוטומטי...");
+  try {
+    const summary = await runMonthlyRollover();
+    const groupId = process.env.WHATSAPP_GROUP_ID;
+    const sock = getSocket();
+
+    if (sock && groupId) {
+      await sock.sendMessage(groupId, { text: summary });
+      console.log("✅ הודעת גלגול חודשי נשלחה בהצלחה לוואטסאפ.");
     }
-  } else {
-    rolloverRanThisMonth = false;
+  } catch (error) {
+    console.error("❌ שגיאה בביצוע גלגול חודשי:", error);
   }
-}, 60 * 60 * 1000);
+});
