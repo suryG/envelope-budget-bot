@@ -126,9 +126,10 @@ export async function startWhatsAppClient() {
         return;
       }
 
-      // 4. טיפול בפקודת עריכה
+     // 4. טיפול בפקודת עריכה
       if (trimmedText.startsWith("ערוך") || trimmedText.startsWith("edit")) {
-        await handleEditCommand(sock, sender, trimmedText);
+        const responseText = await handleEditCommand(trimmedText);
+        await sock.sendMessage(sender, { text: responseText });
         return;
       }
 
