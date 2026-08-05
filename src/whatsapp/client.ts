@@ -132,18 +132,26 @@ export async function startWhatsAppClient() {
 if (!msg || !msg.message || isJidStatusBroadcast(msg.key.remoteJid || "")) {
   return;
 }
+const sender = msg.key.remoteJid;
+      if (!sender) return;
 
+      // 2. בדיקה מול משתנה הסביבה של הקבוצה המורשית
+      const allowedGroupId = process.env.WHATSAPP_GROUP_ID; // למשל: "120363427557151657@g.us"
+
+      // אם ההודעה מגיעה מקבוצה, נבדוק אם זו הקבוצה המורשית. אם זו קבוצה אחרת - מתעלמים.
+      if (sender.endsWith("@g.us")) {
+        if (allowedGroupId && sender !== allowedGroupId) {
+          return; // קבוצה לא מורשית -> להתעלם
+        }
+      }
 // 2. חילוץ טקסט ההודעה
 const text =
-  msg.message?.conversation ||
-  msg.message?.extendedTextMessage?.text;
+        msg.message?.conversation ||
+        msg.message?.extendedTextMessage?.text;
 
-if (!text) return;
+      if (!text) return;
 
-const sender = msg.key.remoteJid;
-if (!sender) return;
-
-const trimmedText = text.trim();
+      const trimmedText = text.trim();
 
 // 🟢 מניעת לופים קריטית: אם ההודעה מתחילה באימוג'י של הבוט - התעלם!
 // זה מונע מהבוט לעבד הודעות שגיאה או תפריטים שהוא בעצמו שלח
