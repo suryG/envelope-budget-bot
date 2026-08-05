@@ -40,7 +40,7 @@ export const COMPANY_MAP: Record<string, CompanyTypes> = {
 /**
  * מביא את רשימת הכרטיסים המוצפנים מה-DB ומפענח אותם לשימוש בסקריפר
  */
-async function getTargetAccounts() {
+async function getTargetAccountsFromDB() {
   const savedCards = await prisma.creditCard.findMany({
     where: { isActive: true },
   });
@@ -63,9 +63,9 @@ async function getTargetAccounts() {
  * מריץ סריקה על כל החשבונות והכרטיסים הרשומים ב-DB ומעבד את העסקאות
  */
 export async function fetchAndProcessTransactions() {
-  console.log("🔍 מתחיל משיכת עסקאות מכל הכרטיסים...");
+  console.log("🔍 מתחיל משיכת עסקאות מכל הכרטיסים ב-DB...");
 
-  const targetAccounts = await getTargetAccounts();
+  const targetAccounts = await getTargetAccountsFromDB();
   if (targetAccounts.length === 0) {
     console.log("ℹ️ לא נרשמו כרטיסי אשראי פעילים במסד הנתונים.");
     return;
