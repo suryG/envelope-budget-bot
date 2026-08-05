@@ -129,9 +129,9 @@ export async function startWhatsAppClient() {
       const msg = m.messages[0];
 
       // 1. התעלמות מהודעות ריקות, הודעות שנשלחו ע"י הבוט עצמו או מסטטוסים ברשת
-      if (!msg || !msg.message || msg.key.fromMe || isJidStatusBroadcast(msg.key.remoteJid || "")) {
-        return;
-      }
+      if (!msg || !msg.message || isJidStatusBroadcast(msg.key.remoteJid || "")) {
+  return;
+}
 
       // 2. חילוץ טקסט ההודעה
       const text =
