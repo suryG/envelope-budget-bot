@@ -54,6 +54,23 @@ export async function handleWizardStep(sock: any, userJid: string, text: string)
 
   const trimmedText = text.trim();
 
+  // 🟢 מניעת לופים קריטית: התעלמות מהודעות שהבוט בעצמו הרגע שלח
+  if (
+    trimmedText.startsWith("👌") ||
+    trimmedText.startsWith("👤") ||
+    trimmedText.startsWith("🔑") ||
+    trimmedText.startsWith("💳") ||
+    trimmedText.startsWith("⚠️") ||
+    trimmedText.startsWith("❌") ||
+    trimmedText.includes("אנא בחר/י מספר מהרשימה") ||
+    trimmedText.includes("איך תרצה/י לקרוא לכרטיס") ||
+    trimmedText.includes("הזן/י את שם המשתמש") ||
+    trimmedText.includes("הזן/י את סיסמת ההתחברות") ||
+    trimmedText.includes("6 הספרות האחרונות")
+  ) {
+    return; // זו הודעה של הבוט, לא תשובה מהמשתמש!
+  }
+
   if (trimmedText === "ביטול") {
     activeSessions.delete(userJid);
     await sock.sendMessage(userJid, { text: "❌ תהליך הוספת הכרטיס בוטל." });
@@ -109,7 +126,6 @@ export async function handleWizardStep(sock: any, userJid: string, text: string)
     }
   }
 }
-
 /**
  * הצפנת הנתונים ושמירתם ל-DB בסיום הדיאלוג
  */
