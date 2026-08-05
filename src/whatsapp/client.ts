@@ -128,33 +128,46 @@ export async function startWhatsAppClient() {
     try {
       const msg = m.messages[0];
 
-      // 1. התעלמות מהודעות ריקות, הודעות שנשלחו ע"י הבוט עצמו או מסטטוסים ברשת
-      if (!msg || !msg.message || isJidStatusBroadcast(msg.key.remoteJid || "")) {
+  // 1. התעלמות מהודעות ריקות או מסטטוסים
+if (!msg || !msg.message || isJidStatusBroadcast(msg.key.remoteJid || "")) {
   return;
 }
 
-      // 2. חילוץ טקסט ההודעה
-      const text =
-        msg.message?.conversation ||
-        msg.message?.extendedTextMessage?.text;
+// 2. חילוץ טקסט ההודעה
+const text =
+  msg.message?.conversation ||
+  msg.message?.extendedTextMessage?.text;
 
-      if (!text) return;
+if (!text) return;
 
-      const sender = msg.key.remoteJid;
-      if (!sender) return;
+const sender = msg.key.remoteJid;
+if (!sender) return;
 
-      const trimmedText = text.trim();
+const trimmedText = text.trim();
 
-      // הדפסת לוג לכל הודעה שנקלטת
-      console.log(`📩 התקבלה הודעה מ-${sender}: "${trimmedText}"`);
+// 🟢 מניעת לופים קריטית: אם ההודעה מתחילה באימוג'י של הבוט - התעלם!
+// זה מונע מהבוט לעבד הודעות שגיאה או תפריטים שהוא בעצמו שלח
+if (
+  trimmedText.startsWith("⚠️") || 
+  trimmedText.startsWith("💳") || 
+  trimmedText.startsWith("👋") ||
+  trimmedText.startsWith("📊") ||
+  trimmedText.startsWith("🎯") ||
+  trimmedText.startsWith("✅")
+) {
+  return;
+}
 
-      // -------------------------------------------------------------
-      // 🟢 3. דיאלוג הוספת כרטיס אשראי (Wizard State)
-      // -------------------------------------------------------------
-      if (isUserInWizard(sender)) {
-        await handleWizardStep(sock, sender, trimmedText);
-        return;
-      }
+console.log(`📩 התקבלה הודעה מ-${sender}: "${trimmedText}"`);
+
+// -------------------------------------------------------------
+// 🟢 3. דיאלוג הוספת כרטיס אשראי (Wizard State)
+// -------------------------------------------------------------
+if (isUserInWizard(sender)) {
+  await handleWizardStep(sock, sender, trimmedText);
+  return;
+}
+ 
 
       if (trimmedText === "הוסף כרטיס") {
         await startCardWizard(sock, sender);
