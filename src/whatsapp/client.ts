@@ -96,12 +96,8 @@ export async function startWhatsAppClient() {
     try {
       const msg = m.messages[0];
 
-      // 1. התעלמות מהודעות לא תקינות, הודעות עצמיות, או סטטוסים
-      if (
-        !msg ||
-        msg.key.fromMe ||
-        isJidStatusBroadcast(msg.key.remoteJid || "")
-      ) {
+      // 1. התעלמות מהודעות ריקות או מסטטוסים ברשת
+      if (!msg || isJidStatusBroadcast(msg.key.remoteJid || "")) {
         return;
       }
 
@@ -117,7 +113,8 @@ export async function startWhatsAppClient() {
 
       const trimmedText = text.trim();
 
-      console.log(`📩 התקבלה הודעה מ-${sender}: "${trimmedText}"`);
+      // הדפסת לוג לכל הודעה שנקלטת (כולל מציין אם היא נשלחה מתוך המכשיר שלך)
+      console.log(`📩 התקבלה הודעה מ-${sender} (fromMe: ${msg.key.fromMe}): "${trimmedText}"`);
 
       // 3. טיפול בפקודת "יתרות" / status
       if (trimmedText === "יתרות" || trimmedText.toLowerCase() === "status") {
@@ -126,7 +123,7 @@ export async function startWhatsAppClient() {
         return;
       }
 
-     // 4. טיפול בפקודת עריכה
+      // 4. טיפול בפקודת עריכה
       if (trimmedText.startsWith("ערוך") || trimmedText.startsWith("edit")) {
         const responseText = await handleEditCommand(trimmedText);
         await sock.sendMessage(sender, { text: responseText });
