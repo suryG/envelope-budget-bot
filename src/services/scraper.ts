@@ -13,7 +13,7 @@ const prisma = new PrismaClient();
  * 1. ב-Windows: מחפש בנתיבי המחשב המקומי.
  * 2. ב-Linux (Render): משתמש בנתיב הדינמי של Puppeteer!
  */
-function getExecutablePath(): string | undefined {
+async function getExecutablePath(): Promise<string | undefined> {
   if (process.platform === "win32") {
     const chromePath = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
     const edgePath = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
@@ -23,9 +23,9 @@ function getExecutablePath(): string | undefined {
     return undefined;
   }
 
-  // בסביבת Linux / Render - שולף את הנתיב של הדפדפן שהותקן ע"י puppeteer
   try {
-    return puppeteer.executablePath();
+    // 🟢 הוספת await פותרת את שגיאת ה-TypeScript!
+    return await puppeteer.executablePath();
   } catch (e) {
     console.warn("⚠️ לא ניתן היה לזהות את נתיב Puppeteer האוטומטי:", e);
     return undefined;
