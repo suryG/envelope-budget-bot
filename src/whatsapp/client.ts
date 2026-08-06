@@ -14,6 +14,7 @@ import NodeCache from "node-cache";
 
 import { getStatusMessage, getOverBudgetMessage } from "../commands/status";
 import { handleEditCommand } from "../commands/edit";
+import { fetchAndProcessTransactions } from "../services/scraper";
 import { 
   getLatestPendingTransaction, 
   confirmTransaction, 
@@ -286,6 +287,13 @@ if (isUserInWizard(sender)) {
           }
         }
       }
+
+      // אם מישהו שולח "סרוק" בקבוצה - מפעיל את הסקריפר מידית!
+if (trimmedText === "סרוק") {
+  await sock.sendMessage(sender, { text: "⏳ מתחיל סריקה ידנית..." });
+  fetchAndProcessTransactions();
+  return;
+}
 
     } catch (error) {
       console.error("❌ שגיאה בעיבוד ההודעה:", error);
