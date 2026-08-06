@@ -26,6 +26,10 @@ import { isUserInWizard, handleWizardStep, startCardWizard } from "./cardWizard"
 export let latestQrDataUrl: string | null = null;
 let currentSocket: WASocket | null = null;
 
+// ניהול מנגנון ההמתנה בלייב (שלב-שלב)
+let pendingTransactionResolver: ((selectedCategory: string) => void) | null = null;
+let currentAllowedOptions: Record<string, string> = {};
+
 // NodeCache לניהול מנגנון ה-Retry של הודעות ומניעת לופים של סנכרון/פיענוח
 const msgRetryCounterCache = new NodeCache();
 
@@ -34,7 +38,51 @@ export function getSocket(): WASocket | null {
 }
 
 /**
- * פונקציה לשליחת הודעה על עסקה חדשה שהגיעה (נקראת למשל מתוך ה-Scraper)
+ * פונקציה הנקראת מה-Scraper, שולחת הודעת בחירה ומחכה (await) לתגובה חוקית בוואטסאפ
+ */
+export function waitForUserCategorySelection(
+  targetJid: string,
+  merchant: string,
+  amount: number,
+  suggestedCategoryName: string | null,
+  availableCategories: string[]
+): Promise<string> {
+  return new Promise((resolve) => {
+    pendingTransactionResolver = resolve;
+
+    // איפוס אפשרויות קודמות
+    currentAllowedOptions = {};
+
+    let text = `💳 *עסקה חדשה!*\n`;
+    text += `רכישה ב- *${merchant}* על סך *${amount} ₪*.\n\n`;
+    text += `השיבו את המספר המתאים בלבד:\n`;
+
+    let optionIndex = 1;
+
+    // אפשרות 1: ההצעה האוטומטית (אם קיימת)
+    if (suggestedCategoryName) {
+      currentAllowedOptions[optionIndex.toString()] = suggestedCategoryName;
+      text += `${optionIndex}️⃣ *${suggestedCategoryName}* (הצעה אוטומטית)\n`;
+      optionIndex++;
+    }
+
+    // שאר הקטגוריות הקיימות ב-DB
+    for (const catName of availableCategories) {
+      if (catName !== suggestedCategoryName) {
+        currentAllowedOptions[optionIndex.toString()] = catName;
+        text += `${optionIndex}️⃣ ${catName}\n`;
+        optionIndex++;
+      }
+    }
+
+    if (currentSocket) {
+      currentSocket.sendMessage(targetJid, { text });
+    }
+  });
+}
+
+/**
+ * פונקציה לשליחת הודעה על עסקה חדשה שהגיעה (תאימות לאחור)
  */
 export async function sendTransactionNotification(
   targetJid: string, 
@@ -126,28 +174,27 @@ export async function startWhatsAppClient() {
 
   // מנגנון קבלת הודעות נכנסות
   sock.ev.on("messages.upsert", async (m) => {
-try {
-  const msg = m.messages[0];
+    try {
+      const msg = m.messages[0];
 
-  // 1. התעלמות מהודעות ריקות או מסטטוסים
-  if (!msg || !msg.message || isJidStatusBroadcast(msg.key.remoteJid || "")) {
-    return;
-  }
+      // 1. התעלמות מהודעות ריקות או מסטטוסים
+      if (!msg || !msg.message || isJidStatusBroadcast(msg.key.remoteJid || "")) {
+        return;
+      }
 
-  const sender = msg.key.remoteJid;
-  if (!sender) return;
+      const sender = msg.key.remoteJid;
+      if (!sender) return;
 
-  // 2. קריאת מזהה הקבוצה המורשית ממשתנה הסביבה
-  const allowedGroupId = process.env.WHATSAPP_GROUP_ID?.trim();
+      // 2. קריאת מזהה הקבוצה המורשית ממשתנה הסביבה
+      const allowedGroupId = process.env.WHATSAPP_GROUP_ID?.trim();
 
-  // 🔒 סינון הרמטי: אם ההודעה אינה מגיעה בדיוק מהקבוצה המורשית -> להתעלם לחלוטין!
-  // (חוסם קבוצות אחרות, הודעות פרטיות רגילות, והודעות פרטיות מסוג @lid)
-  if (!allowedGroupId || sender !== allowedGroupId) {
-    return;
-  }
+      // 🔒 סינון הרמטי: אם ההודעה אינה מגיעה בדיוק מהקבוצה המורשית -> להתעלם לחלוטין!
+      if (!allowedGroupId || sender !== allowedGroupId) {
+        return;
+      }
 
-// 2. חילוץ טקסט ההודעה
-const text =
+      // חילוץ טקסט ההודעה
+      const text =
         msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text;
 
@@ -155,29 +202,53 @@ const text =
 
       const trimmedText = text.trim();
 
-// 🟢 מניעת לופים קריטית: אם ההודעה מתחילה באימוג'י של הבוט - התעלם!
-// זה מונע מהבוט לעבד הודעות שגיאה או תפריטים שהוא בעצמו שלח
-if (
-  trimmedText.startsWith("⚠️") || 
-  trimmedText.startsWith("💳") || 
-  trimmedText.startsWith("👋") ||
-  trimmedText.startsWith("📊") ||
-  trimmedText.startsWith("🎯") ||
-  trimmedText.startsWith("✅")
-) {
-  return;
-}
+      // 🟢 מניעת לופים קריטית: אם ההודעה מתחילה באימוג'י של הבוט - התעלם!
+      if (
+        trimmedText.startsWith("⚠️") || 
+        trimmedText.startsWith("💳") || 
+        trimmedText.startsWith("👋") ||
+        trimmedText.startsWith("📊") ||
+        trimmedText.startsWith("🎯") ||
+        trimmedText.startsWith("✅") ||
+        trimmedText.startsWith("👍") ||
+        trimmedText.startsWith("❌")
+      ) {
+        return;
+      }
 
-console.log(`📩 התקבלה הודעה מ-${sender}: "${trimmedText}"`);
+      console.log(`📩 התקבלה הודעה מ-${sender}: "${trimmedText}"`);
 
-// -------------------------------------------------------------
-// 🟢 3. דיאלוג הוספת כרטיס אשראי (Wizard State)
-// -------------------------------------------------------------
-if (isUserInWizard(sender)) {
-  await handleWizardStep(sock, sender, trimmedText);
-  return;
-}
- 
+      // -------------------------------------------------------------
+      // 🟢 2.5 טיפול בבחירת קטגוריה בלייב (אם הבוט מחכה לתשובה בלולאה)
+      // -------------------------------------------------------------
+      if (pendingTransactionResolver) {
+        const selectedCategory = currentAllowedOptions[trimmedText];
+
+        if (selectedCategory) {
+          const resolve = pendingTransactionResolver;
+          pendingTransactionResolver = null;
+          currentAllowedOptions = {};
+
+          await sock.sendMessage(sender, { 
+            text: `👍 נבחרה הקטגוריה: *${selectedCategory}*` 
+          });
+
+          resolve(selectedCategory); // 👈 משחרר את ה-await בסקרייפר!
+        } else {
+          await sock.sendMessage(sender, { 
+            text: `❌ נא לבחור מספר תקין מתוך הרשימה בלבד!` 
+          });
+        }
+        return;
+      }
+
+      // -------------------------------------------------------------
+      // 🟢 3. דיאלוג הוספת כרטיס אשראי (Wizard State)
+      // -------------------------------------------------------------
+      if (isUserInWizard(sender)) {
+        await handleWizardStep(sock, sender, trimmedText);
+        return;
+      }
 
       if (trimmedText === "הוסף כרטיס") {
         await startCardWizard(sock, sender);
@@ -289,11 +360,11 @@ if (isUserInWizard(sender)) {
       }
 
       // אם מישהו שולח "סרוק" בקבוצה - מפעיל את הסקריפר מידית!
-if (trimmedText === "סרוק") {
-  await sock.sendMessage(sender, { text: "⏳ מתחיל סריקה ידנית..." });
-  fetchAndProcessTransactions();
-  return;
-}
+      if (trimmedText === "סרוק") {
+        await sock.sendMessage(sender, { text: "⏳ מתחיל סריקה ידנית..." });
+        fetchAndProcessTransactions();
+        return;
+      }
 
     } catch (error) {
       console.error("❌ שגיאה בעיבוד ההודעה:", error);

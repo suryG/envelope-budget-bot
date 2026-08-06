@@ -1,10 +1,10 @@
 import { createScraper, CompanyTypes } from "israeli-bank-scrapers";
 import fs from "fs";
-import puppeteer from "puppeteer"; // 👈 ייבוא puppeteer לקבלת הנתיב האוטומטי
+import puppeteer from "puppeteer";
 import { PrismaClient } from "@prisma/client";
 import { decrypt } from "./crypto";
-import { registerNewCharge } from "./transactionService";
-import { sendTransactionNotification } from "../whatsapp/client";
+import { registerNewCharge, confirmTransaction } from "./transactionService";
+import { waitForUserCategorySelection } from "../whatsapp/client";
 
 const prisma = new PrismaClient();
 
@@ -24,7 +24,6 @@ async function getExecutablePath(): Promise<string | undefined> {
   }
 
   try {
-    // 🟢 הוספת await פותרת את שגיאת ה-TypeScript!
     return await puppeteer.executablePath();
   } catch (e) {
     console.warn("⚠️ לא ניתן היה לזהות את נתיב Puppeteer האוטומטי:", e);
@@ -72,7 +71,7 @@ export async function fetchAndProcessTransactions() {
     return;
   }
 
-  const executablePath =await getExecutablePath();
+  const executablePath = await getExecutablePath();
   const targetJid = process.env.WHATSAPP_GROUP_ID;
 
   if (!targetJid) {
@@ -80,14 +79,20 @@ export async function fetchAndProcessTransactions() {
     return;
   }
 
+  // טעינת רשימת הקטגוריות הקיימות ב-DB מראש
+  const allCategories = await prisma.category.findMany({
+    select: { name: true },
+  });
+  const categoryNames = allCategories.map((c) => c.name);
+
   for (const accountConfig of targetAccounts) {
     console.log(`💳 סורק את: ${accountConfig.name}...`);
 
-   const options = {
+    const options = {
       companyId: accountConfig.companyId,
-      startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // מומלץ 30 ימים אחורה
+      startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 ימים אחורה
       showBrowser: false,
-      timeout: 90000, // 👈 90 שניות לכל התהליך
+      timeout: 90000,
       ...(executablePath ? { executablePath } : {}),
       browserOptions: {
         args: [
@@ -97,7 +102,6 @@ export async function fetchAndProcessTransactions() {
           "--disable-accelerated-2d-canvas",
           "--disable-gpu",
           "--window-size=1920,1080",
-          // 👈 שינוי ה-User Agent מונע חסימות ואיטיות של האתרים מול Render:
           "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         ],
       },
@@ -124,13 +128,17 @@ export async function fetchAndProcessTransactions() {
           const chargeResult = await registerNewCharge(merchant, amount, tx);
 
           if (chargeResult) {
-            await sendTransactionNotification(targetJid, {
-              id: chargeResult.transactionId,
+            // 🟢 הלולאה מציגה את הרשימה, נעצרת ב-await ומחכה לבחירת המשתמש ב-WhatsApp!
+            const chosenCategory = await waitForUserCategorySelection(
+              targetJid,
               merchant,
               amount,
-              suggestedCategoryName: chargeResult.suggestedCategoryName,
-              status: chargeResult.status,
-            });
+              chargeResult.suggestedCategoryName,
+              categoryNames
+            );
+
+            // 🟢 שיוך העסקה לקטגוריה שנבחרה ועדכון ה-DB
+            await confirmTransaction(chargeResult.transactionId, chosenCategory);
           }
         }
       }
