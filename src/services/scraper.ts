@@ -72,7 +72,7 @@ export async function fetchAndProcessTransactions() {
     return;
   }
 
-  const executablePath = getExecutablePath();
+  const executablePath =await getExecutablePath();
   const targetJid = process.env.WHATSAPP_GROUP_ID;
 
   if (!targetJid) {
