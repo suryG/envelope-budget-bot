@@ -83,19 +83,22 @@ export async function fetchAndProcessTransactions() {
   for (const accountConfig of targetAccounts) {
     console.log(`💳 סורק את: ${accountConfig.name}...`);
 
-    const options = {
+   const options = {
       companyId: accountConfig.companyId,
-      startDate: new Date(Date.now() - 24 * 60 * 60 * 1000),
+      startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // מומלץ 30 ימים אחורה
       showBrowser: false,
+      timeout: 90000, // 👈 90 שניות לכל התהליך
       ...(executablePath ? { executablePath } : {}),
-      // 🟢 הגדרות קריטיות להרצת Chrome בסביבת Linux / Render
       browserOptions: {
         args: [
           "--no-sandbox",
-    "--disable-setuid-sandbox",
-    "--disable-dev-shm-usage",
-    "--disable-accelerated-2d-canvas",
-    "--disable-gpu",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-accelerated-2d-canvas",
+          "--disable-gpu",
+          "--window-size=1920,1080",
+          // 👈 שינוי ה-User Agent מונע חסימות ואיטיות של האתרים מול Render:
+          "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         ],
       },
     };
