@@ -50,14 +50,27 @@ async function getTargetAccountsFromDB() {
 
   return savedCards.map((card) => {
     const card6Digits = card.card6Digits ? decrypt(card.card6Digits) : undefined;
+    const decryptedUsername = decrypt(card.username);
+    const decryptedPassword = decrypt(card.password);
+
+    const isIsracardOrAmex = card.company === "isracard" || card.company === "amex";
+
+    const credentials: Record<string, any> = {
+      password: decryptedPassword,
+      ...(card6Digits ? { card6Digits } : {}),
+    };
+
+    // 🟢 תיקון קריטי: ישראכארט דורשת id ולא username!
+    if (isIsracardOrAmex) {
+      credentials.id = decryptedUsername;
+    } else {
+      credentials.username = decryptedUsername;
+    }
+
     return {
       name: card.name,
       companyId: COMPANY_MAP[card.company],
-      credentials: {
-        username: decrypt(card.username),
-        password: decrypt(card.password),
-        ...(card6Digits ? { card6Digits } : {}),
-      },
+      credentials,
     };
   });
 }
@@ -92,7 +105,7 @@ export async function fetchAndProcessTransactions() {
       companyId: accountConfig.companyId,
       startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 ימים אחורה
       showBrowser: false,
-      timeout: 90000,
+      timeout: 120000, // הגדלת הטיימאאוט ל-120 שניות למניעת חסימות בטעינה איטית
       ...(executablePath ? { executablePath } : {}),
       browserOptions: {
         args: [
@@ -102,7 +115,9 @@ export async function fetchAndProcessTransactions() {
           "--disable-accelerated-2d-canvas",
           "--disable-gpu",
           "--window-size=1920,1080",
-          "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          // 🟢 עקיפת הגנות 403 של Cloudflare / Isracard:
+          "--disable-blink-features=AutomationControlled",
+          "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         ],
       },
     };
@@ -128,7 +143,7 @@ export async function fetchAndProcessTransactions() {
           const chargeResult = await registerNewCharge(merchant, amount, tx);
 
           if (chargeResult) {
-            // 🟢 הלולאה מציגה את הרשימה, נעצרת ב-await ומחכה לבחירת המשתמש ב-WhatsApp!
+            // הלולאה מציגה את הרשימה, נעצרת ב-await ומחכה לבחירת המשתמש ב-WhatsApp!
             const chosenCategory = await waitForUserCategorySelection(
               targetJid,
               merchant,
@@ -137,7 +152,7 @@ export async function fetchAndProcessTransactions() {
               categoryNames
             );
 
-            // 🟢 שיוך העסקה לקטגוריה שנבחרה ועדכון ה-DB
+            // שיוך העסקה לקטגוריה שנבחרה ועדכון ה-DB
             await confirmTransaction(chargeResult.transactionId, chosenCategory);
           }
         }
