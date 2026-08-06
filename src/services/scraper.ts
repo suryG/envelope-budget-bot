@@ -55,12 +55,13 @@ async function getTargetAccountsFromDB() {
 
     const isIsracardOrAmex = card.company === "isracard" || card.company === "amex";
 
-    const credentials: Record<string, any> = {
+    // 🟢 שימוש ב-any עבור ה-Credentials כדי למנוע קונפליקט טיפוסים ב-TypeScript
+    const credentials: any = {
       password: decryptedPassword,
       ...(card6Digits ? { card6Digits } : {}),
     };
 
-    // 🟢 תיקון קריטי: ישראכארט דורשת id ולא username!
+    // 🟢 ישראכארט דורשת id במקום username
     if (isIsracardOrAmex) {
       credentials.id = decryptedUsername;
     } else {
@@ -105,7 +106,7 @@ export async function fetchAndProcessTransactions() {
       companyId: accountConfig.companyId,
       startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 ימים אחורה
       showBrowser: false,
-      timeout: 120000, // הגדלת הטיימאאוט ל-120 שניות למניעת חסימות בטעינה איטית
+      timeout: 120000,
       ...(executablePath ? { executablePath } : {}),
       browserOptions: {
         args: [
@@ -115,16 +116,16 @@ export async function fetchAndProcessTransactions() {
           "--disable-accelerated-2d-canvas",
           "--disable-gpu",
           "--window-size=1920,1080",
-          // 🟢 עקיפת הגנות 403 של Cloudflare / Isracard:
           "--disable-blink-features=AutomationControlled",
-          "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+          "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         ],
       },
     };
 
     try {
       const scraper = createScraper(options as any);
-      const result = await scraper.scrape(accountConfig.credentials);
+      // 🟢 מעבירים את ה-credentials כ-any כדי לפתור את שגיאת Build TS2345
+      const result = await scraper.scrape(accountConfig.credentials as any);
 
       if (!result.success) {
         console.error(`❌ שגיאה בסריקת ${accountConfig.name} [${result.errorType}]:`, result.errorMessage);
