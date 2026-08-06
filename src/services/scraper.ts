@@ -1,5 +1,6 @@
 import { createScraper, CompanyTypes } from "israeli-bank-scrapers";
 import fs from "fs";
+import puppeteer from "puppeteer"; // 👈 ייבוא puppeteer לקבלת הנתיב האוטומטי
 import { PrismaClient } from "@prisma/client";
 import { decrypt } from "./crypto";
 import { registerNewCharge } from "./transactionService";
@@ -8,23 +9,29 @@ import { sendTransactionNotification } from "../whatsapp/client";
 const prisma = new PrismaClient();
 
 /**
- * מזהה נתיב לדפדפן Chrome או Edge במחשב המקומי (Windows).
+ * מזהה נתיב לדפדפן Chrome:
+ * 1. ב-Windows: מחפש בנתיבי המחשב המקומי.
+ * 2. ב-Linux (Render): משתמש בנתיב הדינמי של Puppeteer!
  */
-function getLocalChromePath(): string | undefined {
-  if (process.platform !== "win32") return undefined;
+function getExecutablePath(): string | undefined {
+  if (process.platform === "win32") {
+    const chromePath = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+    const edgePath = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 
-  const chromePath = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-  const edgePath = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
+    if (fs.existsSync(chromePath)) return chromePath;
+    if (fs.existsSync(edgePath)) return edgePath;
+    return undefined;
+  }
 
-  if (fs.existsSync(chromePath)) return chromePath;
-  if (fs.existsSync(edgePath)) return edgePath;
-
-  return undefined;
+  // בסביבת Linux / Render - שולף את הנתיב של הדפדפן שהותקן ע"י puppeteer
+  try {
+    return puppeteer.executablePath();
+  } catch (e) {
+    console.warn("⚠️ לא ניתן היה לזהות את נתיב Puppeteer האוטומטי:", e);
+    return undefined;
+  }
 }
 
-/**
- * מפה שממירה בין שמות החברות ב-DB לסוג החברה ב-israeli-bank-scrapers
- */
 export const COMPANY_MAP: Record<string, CompanyTypes> = {
   max: CompanyTypes.max,
   isracard: CompanyTypes.isracard,
@@ -37,9 +44,6 @@ export const COMPANY_MAP: Record<string, CompanyTypes> = {
   pagi: CompanyTypes.pagi,
 };
 
-/**
- * מביא את רשימת הכרטיסים המוצפנים מה-DB ומפענח אותם לשימוש בסקריפר
- */
 async function getTargetAccountsFromDB() {
   const savedCards = await prisma.creditCard.findMany({
     where: { isActive: true },
@@ -59,9 +63,6 @@ async function getTargetAccountsFromDB() {
   });
 }
 
-/**
- * מריץ סריקה על כל החשבונות והכרטיסים הרשומים ב-DB ומעבד את העסקאות
- */
 export async function fetchAndProcessTransactions() {
   console.log("🔍 מתחיל משיכת עסקאות מכל הכרטיסים ב-DB...");
 
@@ -71,7 +72,7 @@ export async function fetchAndProcessTransactions() {
     return;
   }
 
-  const executablePath = getLocalChromePath();
+  const executablePath = getExecutablePath();
   const targetJid = process.env.WHATSAPP_GROUP_ID;
 
   if (!targetJid) {
@@ -79,24 +80,32 @@ export async function fetchAndProcessTransactions() {
     return;
   }
 
-  // מעבר בלולאה על כל כרטיס מוגדר
   for (const accountConfig of targetAccounts) {
     console.log(`💳 סורק את: ${accountConfig.name}...`);
 
     const options = {
       companyId: accountConfig.companyId,
-      startDate: new Date(Date.now() - 24 * 60 * 60 * 1000), // 24 שעות אחרונות
+      startDate: new Date(Date.now() - 24 * 60 * 60 * 1000),
       showBrowser: false,
-      executablePath,
+      ...(executablePath ? { executablePath } : {}),
+      // 🟢 הגדרות קריטיות להרצת Chrome בסביבת Linux / Render
+      browserOptions: {
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+        ],
+      },
     };
 
     try {
-      const scraper = createScraper(options);
+      const scraper = createScraper(options as any);
       const result = await scraper.scrape(accountConfig.credentials);
 
       if (!result.success) {
         console.error(`❌ שגיאה בסריקת ${accountConfig.name} [${result.errorType}]:`, result.errorMessage);
-        continue; // ממשיך לכרטיס הבא במידה ונכשל
+        continue;
       }
 
       const accounts = result.accounts || [];
@@ -108,10 +117,8 @@ export async function fetchAndProcessTransactions() {
           const merchant = tx.description;
           const amount = Math.abs(tx.chargedAmount);
 
-          // 1. רישום העסקה במערכת (כולל סינון הוראות קבע)
           const chargeResult = await registerNewCharge(merchant, amount, tx);
 
-          // 2. שליחת התראה לוואטסאפ במידה והעסקה נוצרה ב-DB
           if (chargeResult) {
             await sendTransactionNotification(targetJid, {
               id: chargeResult.transactionId,
