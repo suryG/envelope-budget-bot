@@ -125,26 +125,26 @@ export async function startWhatsAppClient() {
 
   // מנגנון קבלת הודעות נכנסות
   sock.ev.on("messages.upsert", async (m) => {
-  try {
-    const msg = m.messages[0];
+try {
+  const msg = m.messages[0];
 
-    // 1. התעלמות מהודעות ריקות או מסטטוסים
-    if (!msg || !msg.message || isJidStatusBroadcast(msg.key.remoteJid || "")) {
-      return;
-    }
+  // 1. התעלמות מהודעות ריקות או מסטטוסים
+  if (!msg || !msg.message || isJidStatusBroadcast(msg.key.remoteJid || "")) {
+    return;
+  }
 
-    const sender = msg.key.remoteJid;
-    if (!sender) return;
+  const sender = msg.key.remoteJid;
+  if (!sender) return;
 
-    // 2. בדיקה מול משתנה הסביבה של הקבוצה המורשית
-    const allowedGroupId = process.env.WHATSAPP_GROUP_ID?.trim();
+  // 2. קריאת מזהה הקבוצה המורשית ממשתנה הסביבה
+  const allowedGroupId = process.env.WHATSAPP_GROUP_ID?.trim();
 
-    // 🔒 אם ההודעה מגיעה מקבוצה - היא חייבת להיות בדיוק הקבוצה המורשית!
-    if (sender.endsWith("@g.us")) {
-      if (!allowedGroupId || sender !== allowedGroupId) {
-        return; // קבוצה לא מורשית (או שלא הוגדר ID) -> להתעלם לחלוטין
-      }
-    }
+  // 🔒 סינון הרמטי: אם ההודעה אינה מגיעה בדיוק מהקבוצה המורשית -> להתעלם לחלוטין!
+  // (חוסם קבוצות אחרות, הודעות פרטיות רגילות, והודעות פרטיות מסוג @lid)
+  if (!allowedGroupId || sender !== allowedGroupId) {
+    return;
+  }
+
 // 2. חילוץ טקסט ההודעה
 const text =
         msg.message?.conversation ||
@@ -189,14 +189,27 @@ if (isUserInWizard(sender)) {
       const lowerText = trimmedText.toLowerCase();
       if (["היי", "הי", "hi", "hello", "שלום", "תפריט"].includes(lowerText)) {
         const welcomeMessage = 
-`👋 *היי! איזה כיף שפנית אלי.*
+`👋 היי! איזה כיף שפנית אליי.
 
-מה ברצונך לעשות? הנה הפקודות הזמינות:
+איך אוכל לעזור היום? הנה הפעולות שנוכל לבצע יחד:
 
-📊 *לצפייה ביתרות:* רשום/י *יתרות*
-⚠️ *לצפייה בחריגות תקציב:* רשום/י *חריגות*
-💳 *להוספת כרטיס אשראי חדש:* רשום/י *הוסף כרטיס*
-✏️ *לעריכת קטגוריות/תקציב:* רשום/י *ערוך*`;
+📊 צפייה ביתרות — רשום/י: יתרות
+
+⚠️ צפייה בחריגות תקציב — רשום/י: חריגות
+
+💳 הוספת כרטיס אשראי — רשום/י: הוסף כרטיס
+
+✏️ עדכון תקציב קיים:
+
+ערוך > קטגוריה > סכום
+
+(לדוגמה: ערוך > אוכל > 1500)
+
+➕ הוספת קטגוריה חדשה:
+
+ערוך > חדש > קטגוריה > סכום
+
+(לדוגמה: ערוך > חדש > מסעדות > 800)`;
 
         await sock.sendMessage(sender, { text: welcomeMessage });
         return;
