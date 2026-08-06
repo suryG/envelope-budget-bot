@@ -125,25 +125,26 @@ export async function startWhatsAppClient() {
 
   // מנגנון קבלת הודעות נכנסות
   sock.ev.on("messages.upsert", async (m) => {
-    try {
-      const msg = m.messages[0];
+  try {
+    const msg = m.messages[0];
 
-  // 1. התעלמות מהודעות ריקות או מסטטוסים
-if (!msg || !msg.message || isJidStatusBroadcast(msg.key.remoteJid || "")) {
-  return;
-}
-const sender = msg.key.remoteJid;
-      if (!sender) return;
+    // 1. התעלמות מהודעות ריקות או מסטטוסים
+    if (!msg || !msg.message || isJidStatusBroadcast(msg.key.remoteJid || "")) {
+      return;
+    }
 
-      // 2. בדיקה מול משתנה הסביבה של הקבוצה המורשית
-      const allowedGroupId = process.env.WHATSAPP_GROUP_ID; // למשל: "120363427557151657@g.us"
+    const sender = msg.key.remoteJid;
+    if (!sender) return;
 
-      // אם ההודעה מגיעה מקבוצה, נבדוק אם זו הקבוצה המורשית. אם זו קבוצה אחרת - מתעלמים.
-      if (sender.endsWith("@g.us")) {
-        if (allowedGroupId && sender !== allowedGroupId) {
-          return; // קבוצה לא מורשית -> להתעלם
-        }
+    // 2. בדיקה מול משתנה הסביבה של הקבוצה המורשית
+    const allowedGroupId = process.env.WHATSAPP_GROUP_ID?.trim();
+
+    // 🔒 אם ההודעה מגיעה מקבוצה - היא חייבת להיות בדיוק הקבוצה המורשית!
+    if (sender.endsWith("@g.us")) {
+      if (!allowedGroupId || sender !== allowedGroupId) {
+        return; // קבוצה לא מורשית (או שלא הוגדר ID) -> להתעלם לחלוטין
       }
+    }
 // 2. חילוץ טקסט ההודעה
 const text =
         msg.message?.conversation ||
