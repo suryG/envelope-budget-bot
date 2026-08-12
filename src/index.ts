@@ -4,6 +4,7 @@ import cron from "node-cron";
 import { startWhatsAppClient, latestQrDataUrl, getSocket } from "./whatsapp/client";
 import { runMonthlyRollover } from "./services/rollover";
 import { fetchAndProcessTransactions } from "./services/scraper";
+import smsWebhookRouter from "./routes/smsWebhook";
 
 // ⏰ תזמון הרצת ה-Scraper בדיוק כל שעתיים
 cron.schedule("0 */2 * * *", async () => {
@@ -13,10 +14,14 @@ cron.schedule("0 */2 * * *", async () => {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 app.get("/", (_req, res) => {
   res.redirect("/qr");
 });
+app.use(smsWebhookRouter);
+
 
 // Health check route - keeps the Render instance awake
 app.get("/health", (_req, res) => {
